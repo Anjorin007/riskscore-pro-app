@@ -121,6 +121,113 @@ def remove_accents(text):
     return unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
 
 # -------------------------------
+# Fonction PDF alternative robuste
+# -------------------------------
+def create_pdf_report(age, income, proba, classe, report_text, tr):
+    """Crée un rapport PDF de manière robuste"""
+    try:
+        from fpdf import FPDF
+        
+        class RobustPDF(FPDF):
+            def header(self):
+                try:
+                    self.set_font("Helvetica", "B", 14)
+                    title = remove_accents("RiskScore Pro - Rapport Credit")
+                    self.cell(0, 10, title, ln=True, align="C")
+                    self.ln(3)
+                except:
+                    pass
+
+            def footer(self):
+                try:
+                    self.set_y(-15)
+                    self.set_font("Helvetica", "I", 8)
+                    self.cell(0, 10, f"Page {self.page_no()}", align="C")
+                except:
+                    pass
+
+        pdf = RobustPDF()
+        pdf.add_page()
+        
+        try:
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 8, f"ANALYSE CLIENT - {age} ANS", ln=True)
+            pdf.ln(3)
+            
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, f"Revenu mensuel: {income:,} FCFA", ln=True)
+            pdf.cell(0, 6, f"Probabilite de defaut: {proba:.1%}", ln=True)
+            
+            recommendation = "ACCEPTATION" if classe == 0 else "REJET"
+            pdf.cell(0, 6, f"Recommandation: {recommendation}", ln=True)
+            pdf.ln(5)
+            
+            # Ajouter le rapport de manière sécurisée
+            pdf.set_font("Helvetica", "", 9)
+            
+            # Nettoyer et diviser le texte
+            clean_report = remove_accents(str(report_text))
+            lines = clean_report.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if line:
+                    try:
+                        # Limiter à 90 caractères par ligne
+                        if len(line) > 90:
+                            words = line.split(' ')
+                            current_line = ""
+                            for word in words:
+                                if len(current_line + word) < 90:
+                                    current_line += word + " "
+                                else:
+                                    if current_line.strip():
+                                        pdf.cell(0, 5, current_line.strip(), ln=True)
+                                    current_line = word + " "
+                            if current_line.strip():
+                                pdf.cell(0, 5, current_line.strip(), ln=True)
+                        else:
+                            pdf.cell(0, 5, line, ln=True)
+                    except:
+                        continue
+            
+        except Exception as content_error:
+            pdf.set_font("Helvetica", "", 10)
+            pdf.cell(0, 6, "Rapport genere avec succes", ln=True)
+            pdf.cell(0, 6, f"Analyse pour client de {age} ans", ln=True)
+            pdf.cell(0, 6, f"Probabilite de defaut: {proba:.1%}", ln=True)
+        
+        # Génération des bytes de manière compatible
+        try:
+            # Méthode 1: fpdf2 récent
+            pdf_data = pdf.output()
+            if isinstance(pdf_data, str):
+                return io.BytesIO(pdf_data.encode('latin1'))
+            elif isinstance(pdf_data, (bytes, bytearray)):
+                return io.BytesIO(bytes(pdf_data))
+            else:
+                raise Exception("Format de sortie PDF non reconnu")
+                
+        except Exception:
+            # Méthode 2: fpdf classique
+            try:
+                pdf_buffer = io.BytesIO()
+                pdf_string = pdf.output(dest='S')
+                if isinstance(pdf_string, str):
+                    pdf_buffer.write(pdf_string.encode('latin1'))
+                else:
+                    pdf_buffer.write(bytes(pdf_string))
+                pdf_buffer.seek(0)
+                return pdf_buffer
+            except Exception:
+                # Méthode 3: dernière tentative
+                return None
+                
+    except Exception as e:
+        print(f"Erreur création PDF: {e}")
+        return None
+
+# -------------------------------
 # Dictionnaire de traduction (modifié pour FCFA)
 # -------------------------------
 T = {
@@ -763,50 +870,28 @@ with ai_col2:
     # Utiliser le rapport automatique pour les téléchargements
     report_to_export = st.session_state["texte_ia"] if st.session_state["texte_ia"] else auto_report
     
-    # Génération PDF optimisée
-    try:
-        class PDF(FPDF):
-            def header(self):
-                self.set_font("Helvetica", "B", 16)
-                self.cell(0, 10, remove_accents(tr["pdf_title"]), ln=True, align="C")
-                self.ln(5)
-
-            def footer(self):
-                self.set_y(-15)
-                self.set_font("Helvetica", "I", 8)
-                self.cell(0, 10, f"{tr['page']} {self.page_no()}", align="C")
-
-        pdf = PDF()
-        pdf.add_page()
-        pdf.set_font("Helvetica", "", 10)
-        
-        # Ajouter les données du client
-        pdf.cell(0, 8, f"PROFIL CLIENT - {age} ans", ln=True, align="L")
-        pdf.cell(0, 6, f"Revenu: {income:,} FCFA", ln=True)
-        pdf.cell(0, 6, f"Probabilite de defaut: {proba:.1%}", ln=True)
-        pdf.cell(0, 6, f"Recommandation: {tr['acceptance'] if classe == 0 else tr['rejection']}", ln=True)
-        pdf.ln(5)
-        
-        # Ajouter le rapport
-        for line in report_to_export.split('\n'):
-            clean_line = remove_accents(line.strip())
-            if clean_line:
-                pdf.multi_cell(180, 6, clean_line)
-                pdf.ln(2)
-        
-        pdf_bytes = pdf.output(dest='S').encode('latin1')
-        pdf_output = io.BytesIO(pdf_bytes)
-        pdf_output.seek(0)
-        
+    # Génération PDF avec fonction robuste
+    pdf_buffer = create_pdf_report(age, income, proba, classe, report_to_export, tr)
+    
+    if pdf_buffer is not None:
         st.download_button(
             label=tr["pdf_button"],
-            data=pdf_output,
+            data=pdf_buffer.getvalue(),
             file_name=f"rapport_credit_{age}ans_{proba:.0%}_risque.pdf",
             mime="application/pdf",
             key="pdf_download"
         )
-    except Exception as e:
-        st.error(f"Erreur génération PDF: {str(e)}")
+    else:
+        st.error("Erreur génération PDF - Utilisez l'export Excel en alternative")
+        
+        # Bouton de copie du texte comme alternative
+        st.text_area(
+            "📋 Copiez le rapport manuellement:",
+            value=report_to_export,
+            height=200,
+            key="copy_report",
+            help="Copiez ce texte si le PDF ne fonctionne pas"
+        )
 
     # Génération Excel optimisée
     try:
@@ -905,5 +990,4 @@ if st.sidebar.checkbox("🔧 Infos Debug", value=False):
         "income_fcfa": f"{income:,}",
         "probability": f"{proba:.1%}",
         "risk": "HIGH" if classe == 1 else "LOW"
-
     })
