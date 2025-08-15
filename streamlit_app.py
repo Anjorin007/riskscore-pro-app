@@ -9,6 +9,18 @@ from fpdf import FPDF
 import unicodedata
 import os
 import numpy as np
+import warnings
+
+# Supprimer les warnings matplotlib
+warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+warnings.filterwarnings("ignore", category=FutureWarning, module="matplotlib")
+
+# Configuration matplotlib pour éviter les erreurs
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'Liberation Sans']
+plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['text.usetex'] = False
+plt.rcParams['mathtext.default'] = 'regular'
 
 # -------------------------------
 # OPTIMISATIONS DE PERFORMANCE
@@ -61,6 +73,75 @@ def compute_shap_values(age, income, dependents, open_credit, real_estate, debt_
     }).sort_values(by='shap_value', key=abs, ascending=False)
     
     return shap_values[0], shap_df
+
+# Fonction pour créer un graphique SHAP sécurisé
+def create_safe_shap_plot(shap_values, shap_df):
+    """Crée un graphique SHAP personnalisé sans utiliser tight_layout()"""
+    try:
+        # Créer figure avec taille fixe
+        fig, ax = plt.subplots(figsize=(7, 3.5))
+        fig.patch.set_facecolor('#252c3d')
+        ax.set_facecolor('#252c3d')
+        
+        # Obtenir les top 6 features
+        top_features = shap_df.head(6)
+        
+        # Nettoyer les noms des features
+        feature_names = []
+        for fname in top_features['feature']:
+            clean_name = str(fname).replace('_', ' ')
+            clean_name = clean_name.replace('RevolvingUtilizationOfUnsecuredLines', 'Credit Util.')
+            clean_name = clean_name.replace('NumberOfTime30-59DaysPastDueNotWorse', 'Retards 30-59j')
+            clean_name = clean_name.replace('NumberOfTime60-89DaysPastDueNotWorse', 'Retards 60-89j')
+            clean_name = clean_name.replace('NumberOfTimes90DaysLate', 'Retards 90j+')
+            clean_name = clean_name.replace('MonthlyIncome', 'Revenu')
+            clean_name = clean_name.replace('NumberOfOpenCreditLinesAndLoans', 'Credits actifs')
+            clean_name = clean_name.replace('NumberRealEstateLoansOrLines', 'Prets immobiliers')
+            clean_name = clean_name.replace('NumberOfDependents', 'Dependants')
+            clean_name = clean_name.replace('DebtRatio', 'Ratio dette')
+            clean_name = clean_name.replace('age', 'Age')
+            # Limiter la longueur
+            if len(clean_name) > 15:
+                clean_name = clean_name[:12] + "..."
+            feature_names.append(clean_name)
+        
+        # Créer le graphique en barres horizontales
+        y_pos = np.arange(len(feature_names))
+        shap_vals = top_features['shap_value'].values
+        
+        # Couleurs selon l'impact
+        colors = ['#ff6b6b' if val > 0 else '#4ecdc4' for val in shap_vals]
+        
+        bars = ax.barh(y_pos, shap_vals, color=colors, alpha=0.8, edgecolor='white', linewidth=0.5)
+        
+        # Personnalisation
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels(feature_names, color='white', fontsize=9)
+        ax.set_xlabel('Impact SHAP', color='white', fontsize=10, fontweight='bold')
+        ax.set_title('Impact des variables sur la prediction', color='white', fontsize=11, fontweight='bold', pad=10)
+        
+        # Grille et axes
+        ax.grid(True, alpha=0.3, color='white')
+        ax.tick_params(colors='white', labelsize=8)
+        ax.axvline(x=0, color='white', linewidth=1.5, alpha=0.8)
+        
+        # Ajuster manuellement les marges au lieu d'utiliser tight_layout()
+        plt.subplots_adjust(left=0.25, right=0.95, top=0.9, bottom=0.15)
+        
+        return fig
+        
+    except Exception as e:
+        # Graphique de fallback en cas d'erreur
+        fig, ax = plt.subplots(figsize=(7, 3.5))
+        fig.patch.set_facecolor('#252c3d')
+        ax.set_facecolor('#252c3d')
+        ax.text(0.5, 0.5, f'Graphique SHAP indisponible\nErreur: {str(e)[:50]}...', 
+                ha='center', va='center', color='white', fontsize=10)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+        plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+        return fig
 
 # Fonction pour générer automatiquement le rapport IA basé sur les données actuelles
 def generate_auto_ai_report(age, income, dependents, open_credit, real_estate, debt_ratio, revolving, late_30, late_60, late_90, proba, classe, shap_df, lang):
@@ -118,7 +199,10 @@ def generate_auto_ai_report(age, income, dependents, open_credit, real_estate, d
 # Fonction pour retirer les accents (pour PDF)
 # -------------------------------
 def remove_accents(text):
-    return unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('utf-8')
+    try:
+        return unicodedata.normalize('NFKD', str(text)).encode('ASCII', 'ignore').decode('utf-8')
+    except:
+        return str(text)
 
 # -------------------------------
 # Fonction PDF alternative robuste
@@ -131,7 +215,7 @@ def create_pdf_report(age, income, proba, classe, report_text, tr):
         class RobustPDF(FPDF):
             def header(self):
                 try:
-                    self.set_font("Helvetica", "B", 14)
+                    self.set_font("Arial", "B", 14)
                     title = remove_accents("RiskScore Pro - Rapport Credit")
                     self.cell(0, 10, title, ln=True, align="C")
                     self.ln(3)
@@ -141,7 +225,7 @@ def create_pdf_report(age, income, proba, classe, report_text, tr):
             def footer(self):
                 try:
                     self.set_y(-15)
-                    self.set_font("Helvetica", "I", 8)
+                    self.set_font("Arial", "I", 8)
                     self.cell(0, 10, f"Page {self.page_no()}", align="C")
                 except:
                     pass
@@ -150,11 +234,11 @@ def create_pdf_report(age, income, proba, classe, report_text, tr):
         pdf.add_page()
         
         try:
-            pdf.set_font("Helvetica", "B", 12)
+            pdf.set_font("Arial", "B", 12)
             pdf.cell(0, 8, f"ANALYSE CLIENT - {age} ANS", ln=True)
             pdf.ln(3)
             
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font("Arial", "", 10)
             pdf.cell(0, 6, f"Revenu mensuel: {income:,} FCFA", ln=True)
             pdf.cell(0, 6, f"Probabilite de defaut: {proba:.1%}", ln=True)
             
@@ -163,7 +247,7 @@ def create_pdf_report(age, income, proba, classe, report_text, tr):
             pdf.ln(5)
             
             # Ajouter le rapport de manière sécurisée
-            pdf.set_font("Helvetica", "", 9)
+            pdf.set_font("Arial", "", 9)
             
             # Nettoyer et diviser le texte
             clean_report = remove_accents(str(report_text))
@@ -192,7 +276,7 @@ def create_pdf_report(age, income, proba, classe, report_text, tr):
                         continue
             
         except Exception as content_error:
-            pdf.set_font("Helvetica", "", 10)
+            pdf.set_font("Arial", "", 10)
             pdf.cell(0, 6, "Rapport genere avec succes", ln=True)
             pdf.cell(0, 6, f"Analyse pour client de {age} ans", ln=True)
             pdf.cell(0, 6, f"Probabilite de defaut: {proba:.1%}", ln=True)
@@ -720,8 +804,14 @@ with col_left:
 # -------------------------------
 # Calculs optimisés avec cache - MIS À JOUR EN TEMPS RÉEL
 # -------------------------------
-client_df, proba, classe = predict_client(age, income, dependents, open_credit, real_estate, debt_ratio, revolving, late_30, late_60, late_90)
-shap_values, shap_df = compute_shap_values(age, income, dependents, open_credit, real_estate, debt_ratio, revolving, late_30, late_60, late_90)
+try:
+    client_df, proba, classe = predict_client(age, income, dependents, open_credit, real_estate, debt_ratio, revolving, late_30, late_60, late_90)
+    shap_values, shap_df = compute_shap_values(age, income, dependents, open_credit, real_estate, debt_ratio, revolving, late_30, late_60, late_90)
+except Exception as e:
+    st.error(f"Erreur lors du calcul des prédictions: {str(e)}")
+    # Valeurs par défaut en cas d'erreur
+    proba, classe = 0.5, 1
+    shap_df = pd.DataFrame({'feature': ['age'], 'shap_value': [0.1], 'value': [age]})
 
 with col_right:
     # Résultats en temps réel
@@ -746,7 +836,7 @@ with col_right:
     st.markdown(f'<div class="metric-container"><div class="metric-label">{tr["income"]}</div><div class="metric-value">{income:,} FCFA</div></div>', unsafe_allow_html=True)
 
 # -------------------------------
-# Section SHAP optimisée - TEMPS RÉEL
+# Section SHAP optimisée - TEMPS RÉEL AVEC GESTION D'ERREUR
 # -------------------------------
 st.markdown(f'<div class="section-title">📈 {tr["shap_section"]}</div>', unsafe_allow_html=True)
 
@@ -756,55 +846,52 @@ with shap_col1:
     with st.container():
         st.markdown('<div class="shap-plot">', unsafe_allow_html=True)
         
-        # Graphique SHAP optimisé - MIS À JOUR EN TEMPS RÉEL
-        fig, ax = plt.subplots(figsize=(7, 3.5))
-        fig.patch.set_facecolor('#252c3d')
-        ax.set_facecolor('#252c3d')
+        # Graphique SHAP sécurisé - MIS À JOUR EN TEMPS RÉEL
+        try:
+            fig = create_safe_shap_plot(shap_values, shap_df)
+            st.pyplot(fig)
+            plt.close(fig)  # LIBÉRATION MÉMOIRE
+        except Exception as e:
+            st.error(f"Erreur affichage graphique SHAP: {str(e)}")
+            st.info("📊 Les données d'analyse restent disponibles dans l'interprétation à droite.")
         
-        # Utiliser directement les valeurs SHAP cachées
-        shap.plots.waterfall(shap_values, max_display=6, show=False)
-        plt.title("Impact des variables sur la prédiction", color='white', fontsize=11, fontweight='bold')
-        
-        # Personnaliser les couleurs pour le thème sombre
-        ax.tick_params(colors='white')
-        ax.xaxis.label.set_color('white')
-        ax.yaxis.label.set_color('white')
-        
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close()  # LIBÉRATION MÉMOIRE
         st.markdown('</div>', unsafe_allow_html=True)
 
 with shap_col2:
     # Interprétation optimisée avec données cachées - TEMPS RÉEL
     st.markdown(f"### {tr['interpretation']}")
     
-    top_features = shap_df.head(3)
-    
-    if classe == 1:
-        st.markdown(tr["explanation_high"])
-    else:
-        st.markdown(tr["explanation_low"])
-    
-    for _, row in top_features.iterrows():
-        impact_direction = "↗️ augmente" if row['shap_value'] > 0 else "↘️ diminue"
-        feature_display = row['feature'].replace('RevolvingUtilizationOfUnsecuredLines', 'Utilisation crédit renouvelable')
-        feature_display = feature_display.replace('NumberOfTime30-59DaysPastDueNotWorse', 'Retards 30-59 jours')
-        feature_display = feature_display.replace('NumberOfTime60-89DaysPastDueNotWorse', 'Retards 60-89 jours')
-        feature_display = feature_display.replace('NumberOfTimes90DaysLate', 'Retards ≥90 jours')
-        feature_display = feature_display.replace('MonthlyIncome', 'Revenu mensuel')
-        feature_display = feature_display.replace('NumberOfOpenCreditLinesAndLoans', 'Crédits actifs')
-        feature_display = feature_display.replace('NumberRealEstateLoansOrLines', 'Prêts immobiliers')
-        feature_display = feature_display.replace('NumberOfDependents', 'Personnes à charge')
-        feature_display = feature_display.replace('DebtRatio', 'Ratio d\'endettement')
-        feature_display = feature_display.replace('age', 'Âge')
+    try:
+        top_features = shap_df.head(3)
         
-        st.markdown(f"• **{feature_display}** : {impact_direction} le risque")
-    
-    if classe == 1:
-        st.markdown(tr["conclusion_high"])
-    else:
-        st.markdown(tr["conclusion_low"])
+        if classe == 1:
+            st.markdown(tr["explanation_high"])
+        else:
+            st.markdown(tr["explanation_low"])
+        
+        for _, row in top_features.iterrows():
+            impact_direction = "↗️ augmente" if row['shap_value'] > 0 else "↘️ diminue"
+            feature_display = row['feature'].replace('RevolvingUtilizationOfUnsecuredLines', 'Utilisation crédit renouvelable')
+            feature_display = feature_display.replace('NumberOfTime30-59DaysPastDueNotWorse', 'Retards 30-59 jours')
+            feature_display = feature_display.replace('NumberOfTime60-89DaysPastDueNotWorse', 'Retards 60-89 jours')
+            feature_display = feature_display.replace('NumberOfTimes90DaysLate', 'Retards ≥90 jours')
+            feature_display = feature_display.replace('MonthlyIncome', 'Revenu mensuel')
+            feature_display = feature_display.replace('NumberOfOpenCreditLinesAndLoans', 'Crédits actifs')
+            feature_display = feature_display.replace('NumberRealEstateLoansOrLines', 'Prêts immobiliers')
+            feature_display = feature_display.replace('NumberOfDependents', 'Personnes à charge')
+            feature_display = feature_display.replace('DebtRatio', 'Ratio d\'endettement')
+            feature_display = feature_display.replace('age', 'Âge')
+            
+            st.markdown(f"• **{feature_display}** : {impact_direction} le risque")
+        
+        if classe == 1:
+            st.markdown(tr["conclusion_high"])
+        else:
+            st.markdown(tr["conclusion_low"])
+            
+    except Exception as e:
+        st.error(f"Erreur interprétation SHAP: {str(e)}")
+        st.markdown("🔍 **Analyse simplifiée** : Consultez les métriques principales ci-dessus.")
 
 # -------------------------------
 # Section IA optimisée - RAPPORT AUTOMATIQUE EN TEMPS RÉEL
@@ -815,29 +902,42 @@ ai_col1, ai_col2 = st.columns([2, 1], gap="medium")
 
 with ai_col1:
     # Rapport automatique en temps réel basé sur les données actuelles
-    auto_report = generate_auto_ai_report(age, income, dependents, open_credit, real_estate, 
-                                         debt_ratio, revolving, late_30, late_60, late_90, 
-                                         proba, classe, shap_df, lang)
-    
-    st.markdown(f'<div class="card">{auto_report}</div>', unsafe_allow_html=True)
+    try:
+        auto_report = generate_auto_ai_report(age, income, dependents, open_credit, real_estate, 
+                                             debt_ratio, revolving, late_30, late_60, late_90, 
+                                             proba, classe, shap_df, lang)
+        
+        st.markdown(f'<div class="card">{auto_report}</div>', unsafe_allow_html=True)
+    except Exception as e:
+        st.error(f"Erreur génération rapport: {str(e)}")
+        # Rapport de base en cas d'erreur
+        basic_report = f"""📊 RAPPORT D'ANALYSE BASIQUE
+        
+🎯 Client: {age} ans, {income:,} FCFA/mois
+📈 Probabilité défaut: {proba:.1%}
+🏦 Recommandation: {'REJET' if classe == 1 else 'ACCEPTATION'}"""
+        st.markdown(f'<div class="card">{basic_report}</div>', unsafe_allow_html=True)
     
     # Option pour rapport IA avancé avec Cohere
     st.markdown("---")
     
     # PROMPT avec valeurs actuelles - optimisé pour être plus court
-    prompt = tr["prompt_template"].format(
-        age=age,
-        income=income,
-        debt_ratio=debt_ratio,
-        revolving=revolving,
-        open_credit=open_credit,
-        real_estate=real_estate,
-        dependents=dependents,
-        late_30=late_30,
-        late_60=late_60,
-        late_90=late_90,
-        proba=proba
-    )
+    try:
+        prompt = tr["prompt_template"].format(
+            age=age,
+            income=income,
+            debt_ratio=debt_ratio,
+            revolving=revolving,
+            open_credit=open_credit,
+            real_estate=real_estate,
+            dependents=dependents,
+            late_30=late_30,
+            late_60=late_60,
+            late_90=late_90,
+            proba=proba
+        )
+    except Exception as e:
+        prompt = f"Analysez ce client: {age} ans, {income:,} FCFA/mois, risque {proba:.1%}"
 
     if "texte_ia" not in st.session_state:
         st.session_state["texte_ia"] = None
@@ -868,21 +968,27 @@ with ai_col2:
     st.markdown("### 📥 Téléchargements")
     
     # Utiliser le rapport automatique pour les téléchargements
-    report_to_export = st.session_state["texte_ia"] if st.session_state["texte_ia"] else auto_report
+    try:
+        report_to_export = st.session_state["texte_ia"] if st.session_state["texte_ia"] else auto_report
+    except:
+        report_to_export = f"Rapport client {age} ans - Risque {proba:.1%}"
     
     # Génération PDF avec fonction robuste
-    pdf_buffer = create_pdf_report(age, income, proba, classe, report_to_export, tr)
-    
-    if pdf_buffer is not None:
-        st.download_button(
-            label=tr["pdf_button"],
-            data=pdf_buffer.getvalue(),
-            file_name=f"rapport_credit_{age}ans_{proba:.0%}_risque.pdf",
-            mime="application/pdf",
-            key="pdf_download"
-        )
-    else:
-        st.error("Erreur génération PDF - Utilisez l'export Excel en alternative")
+    try:
+        pdf_buffer = create_pdf_report(age, income, proba, classe, report_to_export, tr)
+        
+        if pdf_buffer is not None:
+            st.download_button(
+                label=tr["pdf_button"],
+                data=pdf_buffer.getvalue(),
+                file_name=f"rapport_credit_{age}ans_{proba:.0%}_risque.pdf",
+                mime="application/pdf",
+                key="pdf_download"
+            )
+        else:
+            st.error("Erreur génération PDF - Utilisez l'export Excel en alternative")
+    except Exception as e:
+        st.error(f"Erreur PDF: {str(e)}")
         
         # Bouton de copie du texte comme alternative
         st.text_area(
@@ -912,20 +1018,23 @@ with ai_col2:
             "Niveau_Risque": tr["low_risk"] if classe == 0 else tr["high_risk"]
         }])
         
-        # Ajouter les facteurs SHAP
-        shap_export = shap_df.head(5).copy()
-        shap_export['feature'] = shap_export['feature'].replace({
-            'RevolvingUtilizationOfUnsecuredLines': 'Utilisation_Credit_Renouvelable',
-            'NumberOfTime30-59DaysPastDueNotWorse': 'Retards_30_59_jours',
-            'NumberOfTime60-89DaysPastDueNotWorse': 'Retards_60_89_jours',
-            'NumberOfTimes90DaysLate': 'Retards_90_jours_plus',
-            'MonthlyIncome': 'Revenu_Mensuel',
-            'NumberOfOpenCreditLinesAndLoans': 'Credits_Actifs',
-            'NumberRealEstateLoansOrLines': 'Prets_Immobiliers',
-            'NumberOfDependents': 'Personnes_Charge',
-            'DebtRatio': 'Ratio_Endettement',
-            'age': 'Age'
-        })
+        # Ajouter les facteurs SHAP de manière sécurisée
+        try:
+            shap_export = shap_df.head(5).copy()
+            shap_export['feature'] = shap_export['feature'].replace({
+                'RevolvingUtilizationOfUnsecuredLines': 'Utilisation_Credit_Renouvelable',
+                'NumberOfTime30-59DaysPastDueNotWorse': 'Retards_30_59_jours',
+                'NumberOfTime60-89DaysPastDueNotWorse': 'Retards_60_89_jours',
+                'NumberOfTimes90DaysLate': 'Retards_90_jours_plus',
+                'MonthlyIncome': 'Revenu_Mensuel',
+                'NumberOfOpenCreditLinesAndLoans': 'Credits_Actifs',
+                'NumberRealEstateLoansOrLines': 'Prets_Immobiliers',
+                'NumberOfDependents': 'Personnes_Charge',
+                'DebtRatio': 'Ratio_Endettement',
+                'age': 'Age'
+            })
+        except:
+            shap_export = pd.DataFrame({'feature': ['age'], 'shap_value': [0.1], 'value': [age]})
         
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
@@ -946,18 +1055,21 @@ with ai_col2:
     # Score de santé financière simplifié
     st.markdown("### 📊 Score de Santé")
     
-    score_sante = (1 - proba) * 100
-    if score_sante >= 80:
-        score_color = "🟢"
-        score_text = "Excellent"
-    elif score_sante >= 60:
-        score_color = "🟡"
-        score_text = "Correct"
-    else:
-        score_color = "🔴"
-        score_text = "Faible"
-    
-    st.markdown(f'<div class="metric-container"><div class="metric-label">Score Financier</div><div class="metric-value">{score_color} {score_sante:.0f}/100</div><div style="color: var(--secondary-text); font-size: 0.8rem; margin-top: 0.3rem;">{score_text}</div></div>', unsafe_allow_html=True)
+    try:
+        score_sante = (1 - proba) * 100
+        if score_sante >= 80:
+            score_color = "🟢"
+            score_text = "Excellent"
+        elif score_sante >= 60:
+            score_color = "🟡"
+            score_text = "Correct"
+        else:
+            score_color = "🔴"
+            score_text = "Faible"
+        
+        st.markdown(f'<div class="metric-container"><div class="metric-label">Score Financier</div><div class="metric-value">{score_color} {score_sante:.0f}/100</div><div style="color: var(--secondary-text); font-size: 0.8rem; margin-top: 0.3rem;">{score_text}</div></div>', unsafe_allow_html=True)
+    except Exception as e:
+        st.markdown(f'<div class="metric-container"><div class="metric-label">Score Financier</div><div class="metric-value">🔴 Erreur calcul</div></div>', unsafe_allow_html=True)
 
 # -------------------------------
 # Footer simplifié
@@ -972,22 +1084,26 @@ with footer_col2:
     st.markdown(f"**🎯 Modèle XGBoost** - Précision optimisée")
 
 # -------------------------------
-# Debug optionnel dans la sidebar
+# Debug optionnel dans la sidebar avec gestion d'erreur
 # -------------------------------
 if st.sidebar.checkbox("🔧 Infos Debug", value=False):
     st.sidebar.markdown("### 🚀 Performance")
-    st.sidebar.markdown(f"**Modèle:** ✅ Chargé")
-    st.sidebar.markdown(f"**Cache SHAP:** ✅ Actif")
-    st.sidebar.markdown(f"**Proba:** {proba:.3f}")
-    st.sidebar.markdown(f"**Classe:** {classe}")
-    st.sidebar.markdown(f"**Top facteur:** {shap_df.iloc[0]['feature'][:20]}...")
-    st.sidebar.markdown(f"**Impact:** {shap_df.iloc[0]['shap_value']:.3f}")
-    
-    # Données actuelles
-    st.sidebar.markdown("### 📊 Données")
-    st.sidebar.json({
-        "age": age,
-        "income_fcfa": f"{income:,}",
-        "probability": f"{proba:.1%}",
-        "risk": "HIGH" if classe == 1 else "LOW"
-    })
+    try:
+        st.sidebar.markdown(f"**Modèle:** ✅ Chargé")
+        st.sidebar.markdown(f"**Cache SHAP:** ✅ Actif")
+        st.sidebar.markdown(f"**Proba:** {proba:.3f}")
+        st.sidebar.markdown(f"**Classe:** {classe}")
+        st.sidebar.markdown(f"**Top facteur:** {shap_df.iloc[0]['feature'][:20]}...")
+        st.sidebar.markdown(f"**Impact:** {shap_df.iloc[0]['shap_value']:.3f}")
+        
+        # Données actuelles
+        st.sidebar.markdown("### 📊 Données")
+        st.sidebar.json({
+            "age": age,
+            "income_fcfa": f"{income:,}",
+            "probability": f"{proba:.1%}",
+            "risk": "HIGH" if classe == 1 else "LOW"
+        })
+    except Exception as e:
+        st.sidebar.error(f"Erreur debug: {str(e)}")
+        st.sidebar.markdown("**Status:** ⚠️ Données partielles disponibles")
