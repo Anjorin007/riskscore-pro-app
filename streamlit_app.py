@@ -16,7 +16,7 @@ import numpy as np
 # Cache pour éviter de recharger le modèle à chaque fois
 @st.cache_resource
 def load_model():
-    return joblib.load("../models/xgb_model.pkl")
+    return joblib.load("models/xgb_model.pkl")
 
 # Cache pour l'explainer SHAP (très coûteux à créer)
 @st.cache_resource
@@ -905,4 +905,5 @@ if st.sidebar.checkbox("🔧 Infos Debug", value=False):
         "income_fcfa": f"{income:,}",
         "probability": f"{proba:.1%}",
         "risk": "HIGH" if classe == 1 else "LOW"
+
     })
